@@ -10,12 +10,13 @@ import math
 
 class Car():
     
-    def __init__(self, posx = 0., posy = 0., vel = 10., alpha = 0., gamma = 0.):
+    def __init__(self, posx = 0., posy = 0., vel = 10., theta = 0.):
 
         self.posx = posx
         self.posy = posy
         self.vel = vel
-        self.alpha = alpha
+        self.theta = theta
+
         self.gamma = gamma
         self.beta = math.tanh(self.gamma)
         self.b = 3
@@ -42,6 +43,7 @@ class Car():
 
     def reset(self):
         self.x = self.x_init.copy()
+    
 
         
     def nextStep(self, u):
@@ -65,6 +67,7 @@ class Car():
 
 
     def getState(self):
+        self.x = np.asarray([self.posx, self.posy, self.vel, self.alpha, self.beta])
         return self.x
     
 
@@ -88,7 +91,7 @@ class env():
     def reset(self):
         self.car.reset()
         self.i_step = 0
-        return self.car.x
+        return self.car.x(
 
 
     def step(self, action):
@@ -113,4 +116,4 @@ class env():
         pass
 
 def make():
-    return env()
+    return env)

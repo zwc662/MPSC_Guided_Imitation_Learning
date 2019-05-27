@@ -7,7 +7,7 @@ import scipy.sparse as sparse
 class MPC():
     def __init__(self, x0, v0, theta0, thetadot0):
         # Horizon is 50 time steps
-        self.N = 50
+        self.N = 20
         # 4 state variables and 1 action variable
         self.NVars  = 5
         # 8s in real time for 50 time steps
@@ -105,8 +105,8 @@ class MPC():
         q = -self.P@q
         return q
 
-    def update(self, x0, v0,theta0, thetadot0):
-        A, l, u = self.getAlu(self.x, x0, v0, theta0, thetadot0)
+    def update(self, x0, v0,theta0, thetadot0, a0 = None):
+        A, l, u = self.getAlu(self.x, x0, v0, theta0, thetadot0, a0)
         #print(A.shape)
         #print(len(A))
         q = self.calcQ()
@@ -120,8 +120,7 @@ class MPC():
         else:
             #self.x += np.random.randn(self.N*self.NVars)*0.1 # help get out of a rut?
             self.m.update_settings(eps_rel=1.1)
-            print("failed")
-            return 0
+            return None
         # The action is the last variable
         return self.x[4*self.N+1]
 
@@ -130,7 +129,7 @@ class MPC():
         #x[0] -= 1
         #print(x[0])
         g = 9.8
-        L = 1.0
+        L = 2.0
         gL = g * L
         m = 1.0 # doesn't matter
         I = L**2 / 3
@@ -138,31 +137,45 @@ class MPC():
         dtinv = self.dtinv
         N = self.N
 
+        # Position is in 0~N-1
         x = var[:N]
+        # Velocity is in N~2N-1 
         v = var[N:2*N]
+        # Angle is in 2N~3N-1
         theta = var[2*N:3*N]
+        # Anglur velocity is in 3N~4N-1
         thetadot = var[3*N:4*N]
+        # Action is in 4N~5N-1
         a = var[4*N:5*N]
+        # All state variables
         dynvars = (x,v,theta,thetadot)
+        # Average between each two consecutive variables
         xavg, vavg, thetavg, thdotavg = map(lambda z: (z[0:-1]+z[1:])/2, dynvars)
+        # Gradient of postion, velocity, angle, anglur velocity at each time step after the 1st
         dx, dv, dthet, dthdot = map(lambda z: (z[1:]-z[0:-1])*dtinv, dynvars)
+        # Gradient of velocity(acceleration) - action
         vres = dv - a[1:]
+        # Gradient of position(transient velocity) - average velocity
         xres = dx - vavg
+        # Composition of the gravity and external force
         torque = (-gL*np.sin(thetavg) + a[1:]*L*np.cos(thetavg))/2
+        # Angular acceleration -  3 * torque/L**2
         thetdotres = dthdot - torque*Iinv
+        # Angular gradient(transient anglur velocity) - average anglur velocity
         thetres = dthet - thdotavg
-
+       
+        # First 4 only consider the 1st update  while the remaining 4 consider all the variables
         return x[0:1]-x0, v[0:1]-v0, theta[0:1]-th0, thetadot[0:1]-thd0, xres,vres, thetdotres, thetres
         #return x[0:5] - 0.5
 
         #print(cons)
 
 
-    def getAlu(self, x, x0, v0, th0, thd0):
+    def getAlu(self, x, x0, v0, th0, thd0, a0 = None):
         N = self.N
         # Build upper bound (gt=greater than) for the first 2 variables, the position and velocity
         gt = np.zeros((2,N))
-        gt[0,:] = -0.5 # 0.15 # x is greaer than 0.15
+        gt[0,:] = -1.5 # 0.15 # x is greaer than 0.15
         gt[1,:] = -3 #-1 #veclotu is gt -1m/s
         #gt[4,:] = -10
         
@@ -170,6 +183,7 @@ class MPC():
         control_n = max(3, int(0.1 / self.dt)) # I dunno. 4 seems to help
         #print(control_n)
 
+        # All variables are larger than -100
         gt[:,:control_n] = -100
         #gt[1,:2] = -100
         #gt[1,:2] = -15
@@ -178,9 +192,10 @@ class MPC():
 
         # Build lower bound (lt=less than) for the first 2 variables, the position and velocity
         lt = np.zeros((2,N))
-        lt[0,:] = 0.5 #0.75 # x less than 0.75
+        lt[0,:] = 1.5 #0.75 # x less than 0.75
         lt[1,:] = 3 #1 # velocity less than 1m/s
         #lt[4,:] = 10
+        # All variables are lower than -100
         lt[:,:	control_n] = 100
         #lt[1,:2] = 100
         #lt[0,:3] = 10
@@ -198,16 +213,33 @@ class MPC():
         #print(ineqA.shape)
         #print(ineqA.todense())
 
-        # The equality constraints are built upon the gradient
+        # The gradients are evaluated by using the previously predicted state
         cons = self.constraint(forward.seed_sparse_gradient(x), x0, v0, th0, thd0)
         # The equality constraint is temp \leq Ax - totval \leq temp
-        # A include the gradients of the variables
+        # A include the gradients of all the outputs w.r.t all the variables. 
+        # Therefore, each output gradient has 5N elements(for all inputs)
         A = sparse.vstack(map(lambda z: z.dvalue, cons)) #  y.dvalue.tocsc()
         #print(A)
         #print(A.shape)
-        # totval includes the variables themselves
+
+        # totval is based on the previously predicted state 
         totval = np.concatenate(tuple(map(lambda z: z.value, cons)))
+
+
+        # Ax_t - x_t = Ax_{t+1}
+        # To find x_{t+1} is to find the x that satisfies Ax=Ax_t-x_t=Ax-totval
+        # A is composed of the gradient of x
         temp = A@x - totval
+
+        # Initial action is external
+        A_ = np.zeros([1, self.x.shape[0]])
+        if a0 is not None:
+            A_[0, 4*self.N + 1] = 1
+        else:
+            a0 = 0
+        temp = np.concatenate(([a0], temp))
+        A = sparse.vstack((A_, A))
+
 
         # Combine Eq constraint and Ineq constraint
         A = sparse.vstack((A,ineqA)).tocsc()
@@ -218,4 +250,5 @@ class MPC():
         #print(gt.shape)
         u = np.concatenate((temp, lt))
         l = np.concatenate((temp, gt))
+
         return A, l, u

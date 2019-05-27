@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 from mpc import MPC
 import numpy as np
 import argparse
@@ -40,6 +41,8 @@ start_theta = 0#-np.pi + 0.4# + 0.1#2 * np.pi #np.pi+0.4
 
 mpc = MPC(0.5,0,start_theta,0) 
 
+states = np.zeros([200, 5])
+
 for i_episode in range(1):
     observation = env.reset()
     state = running_state(observation)
@@ -59,13 +62,17 @@ for i_episode in range(1):
 
 
         #action = env.action_space.sample()
-        a = mpc.update(observation[0] , observation[1], observation[2]+np.pi, observation[3])
+        a = mpc.update(observation[0] , observation[1], observation[2]+np.pi, observation[3], (2 * action - 1) * env.env.force_mag)
         #env.env.force_mag = abs(a) #min(100, abs(a))
-        if a < 0:
-            action = 0
-        else:
-            action = 1
+        if a is None or True:
+            print("Unsafe action>>> Use MPC to solve safe action")
+            a = mpc.update(observation[0] , observation[1], observation[2]+np.pi, observation[3])
+            if a < 0:
+                action = 0
+            else:
+                action = 1
 
+        states[t] = [i for i in observation[0: 4]] + [action]
         observation, reward, done, info = env.step(action)
         print(observation, reward, done, info)
 
@@ -76,11 +83,36 @@ for i_episode in range(1):
 
         env.render()
         if done or num_steps >= args.max_expert_state_num:
-            if num_steps >= 200:
              break
 
         state = next_state
 
 
-
     print('Episode {}\t reward: {:.2f}'.format(i_episode, reward_episode))
+
+t = np.arange(200)
+xs = states[:, 0]
+x_dots = states[:, 1]
+thetas = np.unwrap(states[:, 2])
+theta_dots = states[:, 3]
+actions = states[:, 4]
+
+plt.plot(thetas, theta_dots)
+plt.xlabel("Theta")
+plt.ylabel("Theta_dot")
+plt.title("Theta vs Theta_dot")
+plt.show()
+
+
+plt.plot(t, thetas)
+plt.xlabel("Time")
+plt.ylabel("Theta")
+plt.title("Theta vs Time")
+plt.show()
+
+
+plt.plot(t, actions)
+plt.xlabel("Time")
+plt.ylabel("Actions")
+plt.title("Actions vs Time")
+plt.show()
