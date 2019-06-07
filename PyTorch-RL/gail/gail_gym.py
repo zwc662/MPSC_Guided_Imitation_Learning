@@ -64,7 +64,8 @@ env = gym.make(args.env_name)
 state_dim = env.observation_space.shape[0]
 is_disc_action = len(env.action_space.shape) == 0
 action_dim = 1 if is_disc_action else env.action_space.shape[0]
-running_state = ZFilter((state_dim,), clip=5)
+#running_state = ZFilter((state_dim,), clip=5)
+running_state = ZFilter((state_dim,), False, False, clip=5)
 # running_reward = ZFilter((1,), demean=False, clip=10)
 
 """seeding"""

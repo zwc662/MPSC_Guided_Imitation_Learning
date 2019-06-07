@@ -21,10 +21,10 @@ import pickle
 class mlp(nn.Module):
     def __init__(self, input_size, output_size):
         super(mlp, self).__init__()
-        self.fc1 = nn.Linear(input_size, 200)
-        self.fc2 = nn.Linear(200, 400)
-        self.fc3 = nn.Linear(400, 300)
-        self.fc4 = nn.Linear(300, output_size)
+        self.fc1 = nn.Linear(input_size, 2 * input_size)
+        self.fc2 = nn.Linear(2 * input_size, 4 * input_size)
+        self.fc3 = nn.Linear(4 * input_size, 3 * input_size)
+        self.fc4 = nn.Linear(3 * input_size, output_size)
 
 
     def forward(self, x):
@@ -39,10 +39,12 @@ class mlp(nn.Module):
 
 
 class NeuralNetwork:
-    def __init__(self, input_size = 4, output_size = 2, batch_size = 10, checkpoint = None):
+    def __init__(self, input_size = 4, output_size = 2, batch_size = 10, model_name = 'mlp', checkpoint = None):
         self.output_size = output_size
         self.input_size = input_size
         self.batch_size = batch_size
+
+        self.model_name = model_name
 
         use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if use_cuda else "cpu")
@@ -54,13 +56,20 @@ class NeuralNetwork:
             self.model.eval()
 
         self.criterion = torch.nn.MSELoss()
-        #optimizer = torch.optim.SGD(net.parameters(), lr=1e-4, momentum = 0.9)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.0001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-4, momentum = 0.9)
+        #self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001, betas=(0.8, 0.999), eps=1e-05, weight_decay=0.)
         self.dataset = None
 
-    def data_process(self, X = None, Y = None, path = None):
-        if path is not None:
-            X, Y = pickle.load(open(path, 'rb'))
+    def data_process(self, X = None, Y = None, paths = None):
+        if paths is not None:
+            X = []
+            Y = []
+            for path in paths:
+                X_, Y_ = pickle.load(open(path, 'rb'))
+                X = X + X_
+                Y = Y + Y_
+
+        print(len(X))
 
         self.dataset = data_utils.TensorDataset(torch.from_numpy(np.asarray(X)), torch.from_numpy(np.asarray(Y)))
 
@@ -102,11 +111,13 @@ class NeuralNetwork:
                 # print statistics
                 running_loss += loss.item()
                 if i % 15 == 1:    # print every 5 mini-batches
-                    #print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 5))
-                    running_loss = 0.0
+                    pass
+                    #print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 15))
+                    #running_loss = 0.0
 
             if epoch % 5 == 0:
-                torch.save({'epoch': epoch, 'model_state_dict': self.model.state_dict(), 'optimizer_state_dict': self.optimizer.state_dict(), 'loss': loss}, str('checkpoints/mlp' +  str(epoch) + '.pt'))
+                print('[Epoch %d] avg_loss: %.3f' % (epoch + 1, running_loss/len(dataloader)))
+                torch.save({'epoch': epoch, 'model_state_dict': self.model.state_dict(), 'optimizer_state_dict': self.optimizer.state_dict(), 'loss': loss}, str('checkpoints/' + str(self.model_name) + '_' + str(epoch) + '.pt'))
     
         print('Finished Training')
 

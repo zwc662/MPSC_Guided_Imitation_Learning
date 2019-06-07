@@ -54,5 +54,5 @@ class Critic(nn.Module):
         for affine in self.affine_layers:
             x = self.activation(affine(x))
 
-        prob = torch.sigmoid(self.logic(x))
+        prob = self.logic(x)
         return prob

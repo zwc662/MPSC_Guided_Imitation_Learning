@@ -69,7 +69,8 @@ env = gym.make(args.env_name)
 state_dim = env.observation_space.shape[0]
 is_disc_action = len(env.action_space.shape) == 0
 action_dim = 1 if is_disc_action else env.action_space.shape[0]
-running_state = ZFilter((state_dim,), clip=5)
+#running_state = ZFilter((state_dim,), clip=5)
+running_state = ZFilter((state_dim,), False, False, clip= 10)
 # running_reward = ZFilter((1,), demean=False, clip=10)
 
 """seeding"""
@@ -104,7 +105,8 @@ print("Sample %d expert trajectories" % expert_traj.shape[0])
 def expert_reward(state, action):
     state_action = tensor(np.hstack([state, action]), dtype=dtype)
     with torch.no_grad():
-        return -math.log(discrim_net(state_action)[0].item())
+        #return -math.log(discrim_net(state_action)[0].item())
+        return discrim_net(state_action)[0].item()
 
 
 """create agent"""

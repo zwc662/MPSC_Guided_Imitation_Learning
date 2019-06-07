@@ -17,8 +17,8 @@ class CarDynamics(BatchAutoDiffDynamics):
     def __init__(self, 
                  dt,
                  constrain = True,
-                 min_bounds = np.array([-1.0, -np.pi]),
-                 max_bounds = np.array([1.0, np.pi]),
+                 min_bounds = np.array([-1.0, -1.0]),
+                 max_bounds = np.array([1.0, 1.0]),
                  l = 1.0,
                  **kwargs):
         """Car dynamics.
