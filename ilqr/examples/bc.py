@@ -78,13 +78,12 @@ class NeuralNetwork:
         if checkpoint is not None:
             checkpoint = torch.load(checkpoint)
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             epoch_init = checkpoint['epoch'] + 1
             loss = checkpoint['loss']
             self.model.eval()
             loss.backward()
             self.optimizer.step()
-    
     
     
         for epoch in range(epoch_init, num_epoch + epoch_init):  # loop over the dataset multiple times
@@ -96,17 +95,7 @@ class NeuralNetwork:
                 inputs, labels = data
                 inputs, labels = inputs.float().to(self.device), labels.float().to(self.device)
     
-                # zero the parameter gradients
-                self.optimizer.zero_grad()
-    
-                # forward + backward + optimize
-                outputs = self.model(inputs)
-                outputs = torch.reshape(outputs, (outputs.size()[0], self.output_size))
-    
-                loss = self.criterion(outputs, labels)
-                loss.backward()
-                self.optimizer.step()
-    
+                loss = self.bc_step(inputs, labels) 
             
                 # print statistics
                 running_loss += loss.item()
@@ -126,5 +115,29 @@ class NeuralNetwork:
         y = self.model(torch.tensor(x).float().to(self.device)).detach().cpu().numpy()
         return y
 
-#if __name__ == '__main__':
-#    print("hehe")
+
+    def bc_step(self, inputs, labels, l2_reg = None):
+        # zero the parameter gradients
+        self.optimizer.zero_grad()
+    
+        # forward + backward + optimize
+        outputs = self.model(inputs)
+        outputs = torch.reshape(outputs, (outputs.size()[0], self.output_size))
+    
+        loss = self.criterion(outputs, labels)
+        loss.backward()
+        self.optimizer.step()
+
+        weights = self.model.parameters()
+
+        return loss
+            
+        
+
+
+if __name__ == '__main__':
+    n = 10
+    agent = NeuralNetwork(input_size = (n + 1) * 4, model_name = 'test', batch_size = 1000, checkpoint = 'checkpoints/mlp_H10_995.pt')
+
+    agent.data_process(paths = ['expert_pts_10058_H10.p', 'expert_pts_17358_H10.p'])
+    agent.train(num_epoch = 1000)

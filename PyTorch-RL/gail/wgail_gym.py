@@ -177,7 +177,7 @@ def main_loop():
             print('{}\tT_sample {:.4f}\tT_update {:.4f}\texpert_R_avg {:.2f}\tR_avg {:.2f}'.format(
                 i_iter, log['sample_time'], t1-t0, log['avg_c_reward'], log['avg_reward']))
 
-        if args.save_model_interval > 0 and (i_iter+1) % args.save_model_interval == 0:
+        if False and args.save_model_interval > 0 and (i_iter+1) % args.save_model_interval == 0:
             print('Model saved')
             to_device(torch.device('cpu'), policy_net, value_net, discrim_net)
             pickle.dump((policy_net, value_net, discrim_net), open(os.path.join(assets_dir(), 'learned_models/{}_wgail.p'.format(args.env_name)), 'wb'))
