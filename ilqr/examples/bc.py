@@ -95,7 +95,16 @@ class NeuralNetwork:
                 inputs, labels = data
                 inputs, labels = inputs.float().to(self.device), labels.float().to(self.device)
     
-                loss = self.bc_step(inputs, labels) 
+                # zero the parameter gradients
+                self.optimizer.zero_grad()
+    
+                # forward + backward + optimize
+                outputs = self.model(inputs)
+                outputs = torch.reshape(outputs, (outputs.size()[0], self.output_size))
+    
+                loss = self.criterion(outputs, labels)
+                loss.backward()
+                self.optimizer.step()
             
                 # print statistics
                 running_loss += loss.item()
@@ -116,21 +125,17 @@ class NeuralNetwork:
         return y
 
 
-    def bc_step(self, inputs, labels, l2_reg = None):
-        # zero the parameter gradients
-        self.optimizer.zero_grad()
-    
-        # forward + backward + optimize
-        outputs = self.model(inputs)
-        outputs = torch.reshape(outputs, (outputs.size()[0], self.output_size))
-    
-        loss = self.criterion(outputs, labels)
-        loss.backward()
-        self.optimizer.step()
+    def num_parameters(self, model):
+        parameters = self.model.parameters()
+        num_pars = 0
+        for par in parameters:
+            n_ = 1
+            for i in list(par.size()):
+                n_ *= i
+            num_pars += n_
+        return num_pars
 
-        weights = self.model.parameters()
 
-        return loss
             
         
 
