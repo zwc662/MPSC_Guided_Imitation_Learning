@@ -1,495 +1,329 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Aug  2 14:40:23 2018
 
-# Copyright (C) 2018, Anass Al
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>
-"""Controllers."""
-
-import six
-import abc
-import warnings
+@author: Weichao Zhou
+"""
 import numpy as np
+import theano.tensor as T
+from ..dynamics import BatchAutoDiffDynamics, tensor_constrain
+from ..cost import Cost
 
+class NeuralCarDynamics():
+   
+    """Car auto-differentiated dynamics model."""
 
-class MPSC(object):
-
-    """Finite Horizon Iterative Linear Quadratic Regulator."""
-
-    def __init__(self, dynamics, cost, N, max_reg=1e10, hessians=False):
-        """Constructs an iLQR solver.
-
-        Args:
-            dynamics: Plant dynamics.
-            cost: Cost function.
-            N: Horizon length.
-            max_reg: Maximum regularization term to break early due to
-                divergence. This can be disabled by setting it to None.
-            hessians: Use the dynamic model's second order derivatives.
-                Default: only use first order derivatives. (i.e. iLQR instead
-                of DDP).
-        """
-        self.dynamics = dynamics
-        self.cost = cost
-        self.N = N
-        self._use_hessians = hessians and dynamics.has_hessians
-        if hessians and not dynamics.has_hessians:
-            warnings.warn("hessians requested but are unavailable in dynamics")
-
-        # Regularization terms: Levenberg-Marquardt parameter.
-        # See II F. Regularization Schedule.
-        self._mu = 1.0
-        self._mu_min = 1e-6
-        self._mu_max = max_reg
-        self._delta_0 = 2.0
-        self._delta = self._delta_0
-
-        self._k = np.zeros((N, dynamics.action_size))
-        self._K = np.zeros((N, dynamics.action_size, dynamics.state_size))
-
-    def fit(self, x0, us_init, n_iterations=100, tol=1e-6, on_iteration=None):
-        """Computes the optimal controls.
+    def __init__(self, 
+                 dt,
+                 constrain = True,
+                 min_bounds = np.array([-1.0, -1.0]),
+                 max_bounds = np.array([1.0, 1.0]),
+                 l = 1.0,
+                 **kwargs):
+        """Car dynamics.
 
         Args:
-            x0: Initial state [state_size].
-            us_init: Initial control path [N, action_size].
-            n_iterations: Maximum number of interations. Default: 100.
-            tol: Tolerance. Default: 1e-6.
-            on_iteration: Callback at the end of each iteration with the
-                following signature:
-                (iteration_count, x, J_opt, accepted, converged) -> None
-                where:
-                    iteration_count: Current iteration count.
-                    xs: Current state path.
-                    us: Current action path.
-                    J_opt: Optimal cost-to-go.
-                    accepted: Whether this iteration yielded an accepted result.
-                    converged: Whether this iteration converged successfully.
-                Default: None.
+            dt: Time step [s].
+            constrain: Whether to constrain the action space or not.
+            min_bounds: Minimum bounds for actions [N, rad].
+            max_bounds: Maximum bounds for actions [N, rad].
+            wheel diameter
+            **kwargs:
 
-        Returns:
-            Tuple of
-                xs: optimal state path [N+1, state_size].
-                us: optimal control path [N, action_size].
+            Note:
+                state: [posx, posy, v, theta]
+                action: [v_dot, theta_dot]
         """
-        # Reset regularization term.
-        self._mu = 1.0
-        self._delta = self._delta_0
 
-        # Backtracking line search candidates 0 < alpha <= 1.
-        alphas = 1.1**(-np.arange(10)**2)
+        self.constrained = constrain
+        self.min_bounds = min_bounds
+        self.max_bounds = max_bounds
 
-        us = us_init.copy()
-        k = self._k
-        K = self._K
+        def f(x, u, i):
+            # Constrain action space.
+            if constrain:
+                u = tensor_constrain(u, min_bounds, max_bounds)
 
-        changed = True
-        converged = False
-        for iteration in range(n_iterations):
-            accepted = False
+            posx = x[..., 0]
+            posy = x[..., 1]
+            v = x[..., 2]
+            theta = x[..., 3]
+            
+            v_dot = u[..., 0]
+            tan_delta = u[..., 1]
 
-            # Forward rollout only if it needs to be recomputed.
-            if changed:
-                (xs, F_x, F_u, L, L_x, L_u, L_xx, L_ux, L_uu, F_xx, F_ux,
-                 F_uu) = self._forward_rollout(x0, us)
-                J_opt = L.sum()
-                changed = False
 
-            try:
-                # Backward pass.
-                k, K = self._backward_pass(F_x, F_u, L_x, L_u, L_xx, L_ux, L_uu,
-                                           F_xx, F_ux, F_uu)
+            # Define dynamics model as Jianyu Chen's 
+            # Constrained Iterative LQR for On-Road Autonomous Driving Motion Planning
 
-                # Backtracking line search.
-                for alpha in alphas:
-                    xs_new, us_new = self._control(xs, us, k, K, alpha)
-                    J_new = self._trajectory_cost(xs_new, us_new)
+            theta_dot = v * tan_delta/l
+            posx_ = posx + T.cos(theta) * (v * dt + 0.5 * v_dot * dt**2)
+            posy_ = posy + T.sin(theta) * (v * dt + 0.5 * v_dot * dt**2)
+            v_ = v + v_dot * dt
+            theta_ = theta + theta_dot * dt
 
-                    if J_new < J_opt:
-                        if np.abs((J_opt - J_new) / J_opt) < tol:
-                            converged = True
+            return T.stack([
+                posx_,
+                posy_,
+                v_,
+                theta_
+                ]).T 
 
-                        J_opt = J_new
-                        xs = xs_new
-                        us = us_new
-                        changed = True
 
-                        # Decrease regularization term.
-                        self._delta = min(1.0, self._delta) / self._delta_0
-                        self._mu *= self._delta
-                        if self._mu <= self._mu_min:
-                            self._mu = 0.0
-
-                        # Accept this.
-                        accepted = True
-                        break
-            except np.linalg.LinAlgError as e:
-                # Quu was not positive-definite and this diverged.
-                # Try again with a higher regularization term.
-                warnings.warn(str(e))
-
-            if not accepted:
-                # Increase regularization term.
-                self._delta = max(1.0, self._delta) * self._delta_0
-                self._mu = max(self._mu_min, self._mu * self._delta)
-                if self._mu_max and self._mu >= self._mu_max:
-                    warnings.warn("exceeded max regularization term")
-                    break
-
-            if on_iteration:
-                on_iteration(iteration, xs, us, J_opt, accepted, converged)
-
-            if converged:
-                break
-
-        # Store fit parameters.
-        self._k = k
-        self._K = K
-        self._nominal_xs = xs
-        self._nominal_us = us
-
-        return xs, us
-
-    def _control(self, xs, us, k, K, alpha=1.0):
-        """Applies the controls for a given trajectory.
-
-        Args:
-            xs: Nominal state path [N+1, state_size].
-            us: Nominal control path [N, action_size].
-            k: Feedforward gains [N, action_size].
-            K: Feedback gains [N, action_size, state_size].
-            alpha: Line search coefficient.
-
-        Returns:
-            Tuple of
-                xs: state path [N+1, state_size].
-                us: control path [N, action_size].
+        super(CarDynamics, self).__init__(f, state_size=4,
+                                             action_size=2,
+                                             **kwargs)
+    @classmethod
+    def augment_action(cls, action):
         """
-        xs_new = np.zeros_like(xs)
-        us_new = np.zeros_like(us)
-        xs_new[0] = xs[0].copy()
-
-        for i in range(self.N):
-            # Eq (12).
-            us_new[i] = us[i] + alpha * k[i] + K[i].dot(xs_new[i] - xs[i])
-
-            # Eq (8c).
-            xs_new[i + 1] = self.dynamics.f(xs_new[i], us_new[i], i)
-
-        return xs_new, us_new
-
-    def _trajectory_cost(self, xs, us):
-        """Computes the given trajectory's cost.
-
-        Args:
-            xs: State path [N+1, state_size].
-            us: Control path [N, action_size].
-
-        Returns:
-            Trajectory's total cost.
+            [v_dot, delta] - > [v_dot, tan_delta]
         """
-        J = map(lambda args: self.cost.l(*args), zip(xs[:-1], us,
-                                                     range(self.N)))
-        return sum(J) + self.cost.l(xs[-1], None, self.N, terminal=True)
-
-    def _forward_rollout(self, x0, us):
-        """Apply the forward dynamics to have a trajectory from the starting
-        state x0 by applying the control path us.
-
-        Args:
-            x0: Initial state [state_size].
-            us: Control path [N, action_size].
-
-        Returns:
-            Tuple of:
-                xs: State path [N+1, state_size].
-                F_x: Jacobian of state path w.r.t. x
-                    [N, state_size, state_size].
-                F_u: Jacobian of state path w.r.t. u
-                    [N, state_size, action_size].
-                L: Cost path [N+1].
-                L_x: Jacobian of cost path w.r.t. x [N+1, state_size].
-                L_u: Jacobian of cost path w.r.t. u [N, action_size].
-                L_xx: Hessian of cost path w.r.t. x, x
-                    [N+1, state_size, state_size].
-                L_ux: Hessian of cost path w.r.t. u, x
-                    [N, action_size, state_size].
-                L_uu: Hessian of cost path w.r.t. u, u
-                    [N, action_size, action_size].
-                F_xx: Hessian of state path w.r.t. x, x if Hessians are used
-                    [N, state_size, state_size, state_size].
-                F_ux: Hessian of state path w.r.t. u, x if Hessians are used
-                    [N, state_size, action_size, state_size].
-                F_uu: Hessian of state path w.r.t. u, u if Hessians are used
-                    [N, state_size, action_size, action_size].
-        """
-        state_size = self.dynamics.state_size
-        action_size = self.dynamics.action_size
-        N = us.shape[0]
-
-        xs = np.empty((N + 1, state_size))
-        F_x = np.empty((N, state_size, state_size))
-        F_u = np.empty((N, state_size, action_size))
-
-        if self._use_hessians:
-            F_xx = np.empty((N, state_size, state_size, state_size))
-            F_ux = np.empty((N, state_size, action_size, state_size))
-            F_uu = np.empty((N, state_size, action_size, action_size))
+        if state.ndim == 1:
+            v_dot, delta = action
         else:
-            F_xx = None
-            F_ux = None
-            F_uu = None
+            v_dot = action[..., 0].shape(-1, 1)
+            delta = action[..., 1].shape(-1, 1)
+        return np.hstack([v_dot, np.tan(delta)])
 
-        L = np.empty(N + 1)
-        L_x = np.empty((N + 1, state_size))
-        L_u = np.empty((N, action_size))
-        L_xx = np.empty((N + 1, state_size, state_size))
-        L_ux = np.empty((N, action_size, state_size))
-        L_uu = np.empty((N, action_size, action_size))
 
-        xs[0] = x0
-        for i in range(N):
-            x = xs[i]
-            u = us[i]
+class CarCost(Cost):
+    """Quadratic Regulator Instantaneous Cost for trajectory following and barrier function."""
 
-            xs[i + 1] = self.dynamics.f(x, u, i)
-            F_x[i] = self.dynamics.f_x(x, u, i)
-            F_u[i] = self.dynamics.f_u(x, u, i)
-
-            L[i] = self.cost.l(x, u, i, terminal=False)
-            L_x[i] = self.cost.l_x(x, u, i, terminal=False)
-            L_u[i] = self.cost.l_u(x, u, i, terminal=False)
-            L_xx[i] = self.cost.l_xx(x, u, i, terminal=False)
-            L_ux[i] = self.cost.l_ux(x, u, i, terminal=False)
-            L_uu[i] = self.cost.l_uu(x, u, i, terminal=False)
-
-            if self._use_hessians:
-                F_xx[i] = self.dynamics.f_xx(x, u, i)
-                F_ux[i] = self.dynamics.f_ux(x, u, i)
-                F_uu[i] = self.dynamics.f_uu(x, u, i)
-
-        x = xs[-1]
-        L[-1] = self.cost.l(x, None, N, terminal=True)
-        L_x[-1] = self.cost.l_x(x, None, N, terminal=True)
-        L_xx[-1] = self.cost.l_xx(x, None, N, terminal=True)
-
-        return xs, F_x, F_u, L, L_x, L_u, L_xx, L_ux, L_uu, F_xx, F_ux, F_uu
-
-    def _backward_pass(self,
-                       F_x,
-                       F_u,
-                       L_x,
-                       L_u,
-                       L_xx,
-                       L_ux,
-                       L_uu,
-                       F_xx=None,
-                       F_ux=None,
-                       F_uu=None):
-        """Computes the feedforward and feedback gains k and K.
+    def __init__(self, Q, q, R, r, A, b, q1, q2, x_path, x_nominal = None, u_path=None, Q_terminal=None):
+        """Constructs a Quadratic Cost with barrier function.
 
         Args:
-            F_x: Jacobian of state path w.r.t. x [N, state_size, state_size].
-            F_u: Jacobian of state path w.r.t. u [N, state_size, action_size].
-            L_x: Jacobian of cost path w.r.t. x [N+1, state_size].
-            L_u: Jacobian of cost path w.r.t. u [N, action_size].
-            L_xx: Hessian of cost path w.r.t. x, x
-                [N+1, state_size, state_size].
-            L_ux: Hessian of cost path w.r.t. u, x [N, action_size, state_size].
-            L_uu: Hessian of cost path w.r.t. u, u
-                [N, action_size, action_size].
-            F_xx: Hessian of state path w.r.t. x, x if Hessians are used
-                [N, state_size, state_size, state_size].
-            F_ux: Hessian of state path w.r.t. u, x if Hessians are used
-                [N, state_size, action_size, state_size].
-            F_uu: Hessian of state path w.r.t. u, u if Hessians are used
-                [N, state_size, action_size, action_size].
+            Q: Quadratic state cost matrix [state_size, state_size].
+            q: Linear state cost matrix [state_size, 1]
 
-        Returns:
-            Tuple of
-                k: feedforward gains [N, action_size].
-                K: feedback gains [N, action_size, state_size].
+            R: Quadratic control cost matrix [action_size, action_size].
+            r: Linear control cost matrix [action_size, 1]
+
+            F: Quadratic barrier cost matrix [state_size, state_size]
+            f: Linear barrier cost matrix [state_size, 1]
+
+            x_path: Goal state path [N+1, state_size].
+            u_path: Goal control path [N, action_size].
+            Q_terminal: Terminal quadratic state cost matrix
+                [state_size, state_size].
         """
-        V_x = L_x[-1]
-        V_xx = L_xx[-1]
+        self.Q = np.array(Q)
+        self.q = np.array(q)
 
-        k = np.empty_like(self._k)
-        K = np.empty_like(self._K)
+        self.R = np.array(R)
+        self.r = np.array(r)
 
-        for i in range(self.N - 1, -1, -1):
-            if self._use_hessians:
-                Q_x, Q_u, Q_xx, Q_ux, Q_uu = self._Q(F_x[i], F_u[i], L_x[i],
-                                                     L_u[i], L_xx[i], L_ux[i],
-                                                     L_uu[i], V_x, V_xx,
-                                                     F_xx[i], F_ux[i], F_uu[i])
-            else:
-                Q_x, Q_u, Q_xx, Q_ux, Q_uu = self._Q(F_x[i], F_u[i], L_x[i],
-                                                     L_u[i], L_xx[i], L_ux[i],
-                                                     L_uu[i], V_x, V_xx)
+        self.A = np.array(A)
+        self.b = np.array(b)
+        self.q1 = np.array(q1)
+        self.q2 = np.array(q2)
+        self.F = np.zeros(self.Q.shape)
+        self.f = np.zeros(self.q.shape)
 
-            # Eq (6).
-            k[i] = -np.linalg.solve(Q_uu, Q_u)
-            K[i] = -np.linalg.solve(Q_uu, Q_ux)
+        self.x_path = np.array(x_path)
+        self.x_nominal = x_nominal
 
-            # Eq (11b).
-            V_x = Q_x + K[i].T.dot(Q_uu).dot(k[i])
-            V_x += K[i].T.dot(Q_u) + Q_ux.T.dot(k[i])
+        state_size = self.Q.shape[0]
+        action_size = self.R.shape[0]
+        path_length = self.x_path.shape[0]
 
-            # Eq (11c).
-            V_xx = Q_xx + K[i].T.dot(Q_uu).dot(K[i])
-            V_xx += K[i].T.dot(Q_ux) + Q_ux.T.dot(K[i])
-            V_xx = 0.5 * (V_xx + V_xx.T)  # To maintain symmetry.
+        if Q_terminal is None:
+            self.Q_terminal = self.Q
+        else:
+            self.Q_terminal = np.array(Q_terminal)
 
-        return np.array(k), np.array(K)
+        if u_path is None:
+            self.u_path = np.zeros([path_length - 1, action_size])
+        else:
+            self.u_path = np.array(u_path)
 
-    def _Q(self,
-           f_x,
-           f_u,
-           l_x,
-           l_u,
-           l_xx,
-           l_ux,
-           l_uu,
-           V_x,
-           V_xx,
-           f_xx=None,
-           f_ux=None,
-           f_uu=None):
-        """Computes second order expansion.
+        assert self.Q.shape == self.Q_terminal.shape, "Q & Q_terminal mismatch"
+        assert self.Q.shape[0] == self.Q.shape[1], "Q must be square"
+        assert self.q.shape[0] == self.Q.shape[0], "q mismatch"
 
-        Args:
-            F_x: Jacobian of state w.r.t. x [state_size, state_size].
-            F_u: Jacobian of state w.r.t. u [state_size, action_size].
-            L_x: Jacobian of cost w.r.t. x [state_size].
-            L_u: Jacobian of cost w.r.t. u [action_size].
-            L_xx: Hessian of cost w.r.t. x, x [state_size, state_size].
-            L_ux: Hessian of cost w.r.t. u, x [action_size, state_size].
-            L_uu: Hessian of cost w.r.t. u, u [action_size, action_size].
-            V_x: Jacobian of the value function at the next time step
-                [state_size].
-            V_xx: Hessian of the value function at the next time step w.r.t.
-                x, x [state_size, state_size].
-            F_xx: Hessian of state w.r.t. x, x if Hessians are used
-                [state_size, state_size, state_size].
-            F_ux: Hessian of state w.r.t. u, x if Hessians are used
-                [state_size, action_size, state_size].
-            F_uu: Hessian of state w.r.t. u, u if Hessians are used
-                [state_size, action_size, action_size].
-
-        Returns:
-            Tuple of
-                Q_x: [state_size].
-                Q_u: [action_size].
-                Q_xx: [state_size, state_size].
-                Q_ux: [action_size, state_size].
-                Q_uu: [action_size, action_size].
-        """
-        # Eqs (5a), (5b) and (5c).
-        Q_x = l_x + f_x.T.dot(V_x)
-        Q_u = l_u + f_u.T.dot(V_x)
-        Q_xx = l_xx + f_x.T.dot(V_xx).dot(f_x)
-
-        # Eqs (11b) and (11c).
-        reg = self._mu * np.eye(self.dynamics.state_size)
-        Q_ux = l_ux + f_u.T.dot(V_xx + reg).dot(f_x)
-        Q_uu = l_uu + f_u.T.dot(V_xx + reg).dot(f_u)
-
-        if self._use_hessians:
-            Q_xx += np.tensordot(V_x, f_xx, axes=1)
-            Q_ux += np.tensordot(V_x, f_ux, axes=1)
-            Q_uu += np.tensordot(V_x, f_uu, axes=1)
-
-        return Q_x, Q_u, Q_xx, Q_ux, Q_uu
+        assert self.R.shape[0] == self.R.shape[1], "R must be square"
+        assert self.r.shape[0] == self.R.shape[0], "r mismatch"
 
 
-class RecedingHorizonController(object):
+        assert self.A.shape[-1] == self.Q.shape[0], "Barrier A & Q mismatch"
+        assert self.A.shape[0] == self.b.shape[0], "Barrier A & b mismatch"
+        assert self.q1.shape[0] == self.A.shape[0], "Barrier A & q1 mismatch"
+        assert self.q2.shape[0] == self.A.shape[0], "Barrier A & q2 mismatch"
 
-    """Receding horizon controller for Model Predictive Control."""
 
-    def __init__(self, x0, controller):
-        """Constructs a RecedingHorizonController.
+        assert state_size == self.x_path.shape[1], "Q & x_path mismatch"
+        assert action_size == self.u_path.shape[1], "R & u_path mismatch"
+        assert path_length == self.u_path.shape[0] + 1, \
+                "x_path must be 1 longer than u_path"
 
-        Args:
-            x0: Initial state [state_size].
-            controller: Controller to fit with.
-        """
-        self._x = x0
-        self._controller = controller
-        self._random = np.random.RandomState()
+        # Precompute some common constants.
+        self._Q_plus_Q_T = self.Q + self.Q.T
+        self._R_plus_R_T = self.R + self.R.T
+        self._Q_plus_Q_T_terminal = self.Q_terminal + self.Q_terminal.T
+        self._F_plus_F_T = self.F + self.F.T
 
-    def seed(self, seed):
-        self._random.seed(seed)
+        super(CarCost, self).__init__()
 
-    def set_state(self, x):
-        """Sets the current state of the controller.
+    def l(self, x, u, i, terminal=False):
+        """Instantaneous cost function.
 
         Args:
             x: Current state [state_size].
+            u: Current control [action_size]. None if terminal.
+            i: Current time step.
+            terminal: Compute terminal cost. Default: False.
+
+        Returns:
+            Instantaneous cost (scalar).
         """
-        self._x = x
+        Q = self.Q_terminal if terminal else self.Q
+        r = self.r
+        q = self.q
+        R = self.R
 
-    def control(self,
-                us_init,
-                step_size=1,
-                initial_n_iterations=100,
-                subsequent_n_iterations=1,
-                *args,
-                **kwargs):
-        """Yields the optimal controls to run at every step as a receding
-        horizon problem.
+        x_diff = x - self.x_path[i]
 
-        Note: The first iteration will be slow, but the successive ones will be
-        significantly faster.
+        if self.x_nominal is not None:
+            x_dist = x - np.array([0.0, self.x_nominal(x[0])[0], 0.0, 0.0])
+        else:
+            x_dist = x_diff
 
-        Note: This will automatically move the current controller's state to
-        what the dynamics model believes will be the next state after applying
-        the entire control path computed. Should you want to correct this state
-        between iterations, simply use the `set_state()` method.
+        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T * self.A[0] 
+        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T
+        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T * self.A[1] 
+        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T
+        for i in range(2, self.A.shape[0]):
+            F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
+            f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
+        self.F = F
+        self.f = f
 
-        Note: If your cost or dynamics are time dependent, then you might need
-        to shift their internal state accordingly.
+        squared_x_cost = x_diff.T.dot(Q).dot(x_diff) + x.T.dot(F).dot(x)
+        if terminal:
+            return squared_x_cost
+
+        u_diff = u - self.u_path[i]
+        linear_x_cost = x_diff.T.dot(q) + u_diff.T.dot(r) + x.T.dot(f)
+        return squared_x_cost + u_diff.T.dot(R).dot(u_diff) + linear_x_cost
+
+    def l_x(self, x, u, i, terminal=False):
+        """Partial derivative of cost function with respect to x.
 
         Args:
-            us_init: Initial control path [N, action_size].
-            step_size: Number of steps between each controller fit. Default: 1.
-                i.e. re-fit at every time step. You might need to increase this
-                depending on how powerful your machine is in order to run this
-                in real-time.
-            initial_n_iterations: Initial max number of iterations to fit.
-                Default: 100.
-            subsequent_n_iterations: Subsequent max number of iterations to
-                fit. Default: 1.
-            *args, **kwargs: Additional positional and key-word arguments to
-                pass to `controller.fit()`.
+            x: Current state [state_size].
+            u: Current control [action_size]. None if terminal.
+            i: Current time step.
+            terminal: Compute terminal cost. Default: False.
 
-        Yields:
-            Tuple of
-                xs: optimal state path [step_size+1, state_size].
-                us: optimal control path [step_size, action_size].
+        Returns:
+            dl/dx [state_size].
         """
-        action_size = self._controller.dynamics.action_size
-        n_iterations = initial_n_iterations
-        while True:
-            xs, us = self._controller.fit(self._x,
-                                          us_init,
-                                          n_iterations=n_iterations,
-                                          *args,
-                                          **kwargs)
-            self._x = xs[step_size]
-            yield xs[:step_size + 1], us[:step_size]
+        Q_plus_Q_T = self._Q_plus_Q_T_terminal if terminal else self._Q_plus_Q_T
+        x_diff = x - self.x_path[i]
 
-            # Set up next action path seed by simply moving along the current
-            # optimal path and appending random unoptimal values at the end.
-            us_start = us[step_size:]
-            us_end = self._random.uniform(-1, 1, (step_size, action_size))
-            us_init = np.vstack([us_start, us_end])
-            n_iterations = subsequent_n_iterations
+        if self.x_nominal is not None:
+            x_dist = x - np.array([0.0, self.x_nominal(x[0])[0], 0.0, 0.0])
+        else:
+            x_dist = x_diff
+
+        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T * self.A[0] 
+        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T
+        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T * self.A[1] 
+        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T
+        for i in range(2, self.A.shape[0]):
+            F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
+            f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
+        self.F = F
+        self.f = f
+
+
+        self._F_plus_F_T = self.F + self.F.T
+        F_plus_F_T = self._F_plus_F_T
+
+
+        return x_diff.T.dot(Q_plus_Q_T) + x.T.dot(F_plus_F_T) + self.f.T + self.q.T
+
+    def l_u(self, x, u, i, terminal=False):
+        """Partial derivative of cost function with respect to u.
+
+        Args:
+            x: Current state [state_size].
+            u: Current control [action_size]. None if terminal.
+            i: Current time step.
+            terminal: Compute terminal cost. Default: False.
+
+        Returns:
+            dl/du [action_size].
+        """
+        if terminal:
+            return np.zeros_like(self.u_path)
+
+        u_diff = u - self.u_path[i]
+        return u_diff.T.dot(self._R_plus_R_T) + self.r.T
+
+    def l_xx(self, x, u, i, terminal=False):
+        """Second partial derivative of cost function with respect to x.
+
+        Args:
+            x: Current state [state_size].
+            u: Current control [action_size]. None if terminal.
+            i: Current time step.
+            terminal: Compute terminal cost. Default: False.
+
+        Returns:
+            d^2l/dx^2 [state_size, state_size].
+        """
+
+
+        x_diff = x - self.x_path[i]
+        if self.x_nominal is not None:
+            x_dist = x - np.array([0.0, self.x_nominal(x[0])[0], 0.0, 0.0])
+        else:
+            x_dist = x_diff
+
+        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T * self.A[0] 
+        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T
+        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T * self.A[1] 
+        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T
+        for i in range(2, self.A.shape[0]):
+            F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
+            f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
+        self.F = F
+        self.f = f
+
+
+        self._F_plus_F_T = self.F + self.F.T
+        F_plus_F_T = self._F_plus_F_T
+        return self._F_plus_F_T + self._Q_plus_Q_T_terminal if terminal else self._F_plus_F_T + self._Q_plus_Q_T
+
+    def l_ux(self, x, u, i, terminal=False):
+        """Second partial derivative of cost function with respect to u and x.
+
+        Args:
+            x: Current state [state_size].
+            u: Current control [action_size]. None if terminal.
+            i: Current time step.
+            terminal: Compute terminal cost. Default: False.
+
+        Returns:
+            d^2l/dudx [action_size, state_size].
+        """
+        return np.zeros((self.R.shape[0], self.Q.shape[0]))
+
+    def l_uu(self, x, u, i, terminal=False):
+        """Second partial derivative of cost function with respect to u.
+
+        Args:
+            x: Current state [state_size].
+            u: Current control [action_size]. None if terminal.
+            i: Current time step.
+            terminal: Compute terminal cost. Default: False.
+
+        Returns:
+            d^2l/du^2 [action_size, action_size].
+        """
+        if terminal:
+            return np.zeros_like(self.R)
+
+        return self._R_plus_R_T

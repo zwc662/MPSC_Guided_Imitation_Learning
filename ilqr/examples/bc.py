@@ -51,7 +51,7 @@ class NeuralNetwork:
 
         self.model = mlp(self.input_size, self.output_size).to(self.device)
         if checkpoint is not None:
-            checkpoint = torch.load(checkpoint)
+            checkpoint = torch.load(checkpoint, map_location = self.device)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.model.eval()
 
