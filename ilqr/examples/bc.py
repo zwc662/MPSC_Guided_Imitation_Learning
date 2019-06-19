@@ -66,9 +66,8 @@ class NeuralNetwork:
             Y = []
             for path in paths:
                 X_, Y_ = pickle.load(open(path, 'rb'))
-                X = X + X_
+                X = X + [i[:self.input_size] for i in X_]
                 Y = Y + Y_
-
         print(len(X))
 
         self.dataset = data_utils.TensorDataset(torch.from_numpy(np.asarray(X)), torch.from_numpy(np.asarray(Y)))
@@ -141,8 +140,8 @@ class NeuralNetwork:
 
 
 if __name__ == '__main__':
-    n = 10
-    agent = NeuralNetwork(input_size = (n + 1) * 4, model_name = 'test', batch_size = 1000, checkpoint = 'checkpoints/mlp_H10_995.pt')
+    n = 0
+    agent = NeuralNetwork(input_size = (n + 1) * 4, model_name = 'test', batch_size = 1000)#, checkpoint = 'checkpoints/mlp_H10_995.pt')
 
-    agent.data_process(paths = ['expert_pts_10058_H10.p', 'expert_pts_17358_H10.p'])
+    agent.data_process(paths = ['expert_traj/expert_pts_10058_H10.p', 'expert_traj/expert_pts_17358_H10.p'])
     agent.train(num_epoch = 1000)
