@@ -1,6 +1,6 @@
 export OMP_NUM_THREADS=1
 
-python ./gail/gail_gym.py --env-name Hopper-v2 --expert-traj-path ./assets/expert_traj/Hopper-v2_expert_traj.p  --save-model-interval 10 --min-batch-size 1000 --num-expert-traj 100
+python ./gail/wgail_gym.py --env-name MountainCar-v0 --expert-traj-path ./assets/expert_traj/MountainCar-v0_expert_traj.p  --save-model-interval 10 --min-batch-size 1000 --num-expert-traj 100
 
 # python ./gail/wgail_gym.py --env-name Hopper-v2 --expert-traj-path ./assets/expert_traj/Hopper-v2_expert_traj.p  --save-model-interval 10 --min-batch-size 1000 --num-expert-traj 100
 

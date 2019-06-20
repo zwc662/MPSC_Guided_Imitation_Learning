@@ -200,6 +200,7 @@ def main_loop():
                 # action = policy_net.select_action(state_var)[0].cpu().numpy()
                 action = int(action) if is_disc_action else action.astype(np.float64)
                 next_state, reward, done, _ = env.step(action)
+                #reward = expert_reward(state, action)
                 next_state = running_state(next_state)
                 reward_episode += reward
                 num_steps += 1
