@@ -90,7 +90,7 @@ class CarDynamics(BatchAutoDiffDynamics):
 class CarCost(Cost):
     """Quadratic Regulator Instantaneous Cost for trajectory following and barrier function."""
 
-    def __init__(self, Q, q, R, r, A, b, q1, q2, x_path, x_nominal = None, u_path=None, Q_terminal=None):
+    def __init__(self, Q, q, R, r, A, b, q1, q2, x_nominal, x_barrier_u = None, x_barrier_l = None, u_path=None, Q_terminal=None):
         """Constructs a Quadratic Cost with barrier function.
 
         Args:
@@ -103,7 +103,7 @@ class CarCost(Cost):
             F: Quadratic barrier cost matrix [state_size, state_size]
             f: Linear barrier cost matrix [state_size, 1]
 
-            x_path: Goal state path [N+1, state_size].
+            x_nominal: Goal state path [N+1, state_size].
             u_path: Goal control path [N, action_size].
             Q_terminal: Terminal quadratic state cost matrix
                 [state_size, state_size].
@@ -121,12 +121,13 @@ class CarCost(Cost):
         self.F = np.zeros(self.Q.shape)
         self.f = np.zeros(self.q.shape)
 
-        self.x_path = np.array(x_path)
-        self.x_nominal = x_nominal
+        self.x_nominal = np.array(x_nominal)
+        self.x_barrier_l = x_barrier_l
+        self.x_barrier_u = x_barrier_u
 
         state_size = self.Q.shape[0]
         action_size = self.R.shape[0]
-        path_length = self.x_path.shape[0]
+        path_length = self.x_nominal.shape[0]
 
         if Q_terminal is None:
             self.Q_terminal = self.Q
@@ -152,10 +153,10 @@ class CarCost(Cost):
         assert self.q2.shape[0] == self.A.shape[0], "Barrier A & q2 mismatch"
 
 
-        assert state_size == self.x_path.shape[1], "Q & x_path mismatch"
+        assert state_size == self.x_nominal.shape[1], "Q & x_nominal mismatch"
         assert action_size == self.u_path.shape[1], "R & u_path mismatch"
         assert path_length == self.u_path.shape[0] + 1, \
-                "x_path must be 1 longer than u_path"
+                "x_nominal must be 1 longer than u_path"
 
         # Precompute some common constants.
         self._Q_plus_Q_T = self.Q + self.Q.T
@@ -182,20 +183,28 @@ class CarCost(Cost):
         q = self.q
         R = self.R
 
-        x_diff = x - self.x_path[i]
+        x_diff = x - self.x_nominal[i]
 
-        if self.x_nominal is not None:
-            x_dist = x - np.array([0.0, self.x_nominal(x[0])[0], 0.0, 0.0])
+        if self.x_barrier_l is not None:
+            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[0], 0.0, 0.0])
         else:
             x_dist = x_diff
 
-        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T * self.A[0] 
-        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T
-        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T * self.A[1] 
-        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T
-        for i in range(2, self.A.shape[0]):
-            F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
-            f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
+        if self.x_barrier_u is not None:
+            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[0], 0.0, 0.0])
+        else:
+            x_dist = x_diff
+
+
+        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T * self.A[0]
+        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T
+        
+        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1])) * self.A[1].T * self.A[1]
+        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1])) * self.A[1].T
+
+        #for i in range(2, self.A.shape[0]):
+        #    F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
+        #    f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
         self.F = F
         self.f = f
 
@@ -220,20 +229,27 @@ class CarCost(Cost):
             dl/dx [state_size].
         """
         Q_plus_Q_T = self._Q_plus_Q_T_terminal if terminal else self._Q_plus_Q_T
-        x_diff = x - self.x_path[i]
+        x_diff = x - self.x_nominal[i]
 
-        if self.x_nominal is not None:
-            x_dist = x - np.array([0.0, self.x_nominal(x[0])[0], 0.0, 0.0])
+        if self.x_barrier_l is not None:
+            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[0], 0.0, 0.0])
         else:
             x_dist = x_diff
 
-        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T * self.A[0] 
-        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T
-        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T * self.A[1] 
-        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T
-        for i in range(2, self.A.shape[0]):
-            F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
-            f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
+        if self.x_barrier_u is not None:
+            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[0], 0.0, 0.0])
+        else:
+            x_dist = x_diff
+
+
+        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T * self.A[0]
+        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T
+        
+        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1])) * self.A[1].T * self.A[1]
+        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1])) * self.A[1].T
+        #for i in range(2, self.A.shape[0]):
+        #    F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
+        #    f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
         self.F = F
         self.f = f
 
@@ -276,19 +292,26 @@ class CarCost(Cost):
         """
 
 
-        x_diff = x - self.x_path[i]
-        if self.x_nominal is not None:
-            x_dist = x - np.array([0.0, self.x_nominal(x[0])[0], 0.0, 0.0])
+        x_diff = x - self.x_nominal[i]
+        if self.x_barrier_l is not None:
+            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[0], 0.0, 0.0])
         else:
             x_dist = x_diff
 
-        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T * self.A[0] 
-        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_dist) - self.b[0])) * self.A[0].T
-        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T * self.A[1] 
-        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_dist) - self.b[1])) * self.A[1].T
-        for i in range(2, self.A.shape[0]):
-            F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
-            f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
+        if self.x_barrier_u is not None:
+            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[0], 0.0, 0.0])
+        else:
+            x_dist = x_diff
+
+
+        F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T * self.A[0]
+        f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T
+        
+        F = F + self.q1[1] * self.q2[1]**2 * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1])) * self.A[1].T * self.A[1]
+        f = f + self.q1[1] * self.q2[1] * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1])) * self.A[1].T
+        #for i in range(2, self.A.shape[0]):
+        #    F = F + self.q1[i] * self.q2[i]**2 * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T * self.A[i]
+        #    f = f + self.q1[i] * self.q2[i] * np.exp(self.q2[i] * (self.A[i].dot(x_dist) - self.b[i])) * self.A[i].T
         self.F = F
         self.f = f
 
