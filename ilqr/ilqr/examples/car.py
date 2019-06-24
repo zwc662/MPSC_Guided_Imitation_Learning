@@ -186,15 +186,18 @@ class CarCost(Cost):
         x_diff = x - self.x_nominal[i]
 
         if self.x_barrier_l is not None:
-            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[0], 0.0, 0.0])
+            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[1], 0.0, 0.0])
         else:
             x_dist = x_diff
 
         if self.x_barrier_u is not None:
-            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[0], 0.0, 0.0])
+            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[1], 0.0, 0.0])
         else:
             x_dist = x_diff
 
+       
+        constant_x_cost = self.q1[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0]))\
+                + self.q1[1] * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1]))
 
         F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T * self.A[0]
         f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T
@@ -214,7 +217,7 @@ class CarCost(Cost):
 
         u_diff = u - self.u_path[i]
         linear_x_cost = x_diff.T.dot(q) + u_diff.T.dot(r) + x.T.dot(f)
-        return squared_x_cost + u_diff.T.dot(R).dot(u_diff) + linear_x_cost
+        return squared_x_cost + u_diff.T.dot(R).dot(u_diff) + linear_x_cost + constant_x_cost
 
     def l_x(self, x, u, i, terminal=False):
         """Partial derivative of cost function with respect to x.
@@ -232,12 +235,12 @@ class CarCost(Cost):
         x_diff = x - self.x_nominal[i]
 
         if self.x_barrier_l is not None:
-            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[0], 0.0, 0.0])
+            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[1], 0.0, 0.0])
         else:
             x_dist = x_diff
 
         if self.x_barrier_u is not None:
-            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[0], 0.0, 0.0])
+            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[1], 0.0, 0.0])
         else:
             x_dist = x_diff
 
@@ -294,12 +297,12 @@ class CarCost(Cost):
 
         x_diff = x - self.x_nominal[i]
         if self.x_barrier_l is not None:
-            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[0], 0.0, 0.0])
+            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[1], 0.0, 0.0])
         else:
             x_dist = x_diff
 
         if self.x_barrier_u is not None:
-            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[0], 0.0, 0.0])
+            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[1], 0.0, 0.0])
         else:
             x_dist = x_diff
 
