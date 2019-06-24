@@ -196,8 +196,8 @@ class CarCost(Cost):
             x_dist = x_diff
 
        
-        constant_x_cost = self.q1[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0]))\
-                + self.q1[1] * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1]))
+        constant_x_cost = self.q1[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) - self.q1[0]\
+                + self.q1[1] * np.exp(self.q2[1] * (self.A[1].dot(x_barrier_l) - self.b[1])) - self.q[1]
 
         F = self.q1[0] * self.q2[0]**2 * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T * self.A[0]
         f = self.q1[0] * self.q2[0] * np.exp(self.q2[0] * (self.A[0].dot(x_barrier_u) - self.b[0])) * self.A[0].T
