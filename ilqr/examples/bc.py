@@ -61,9 +61,10 @@ class NeuralNetwork:
         self.dataset = None
 
     def data_process(self, X = None, Y = None, paths = None):
-        if paths is not None:
+        if X is None or Y is None:
             X = []
             Y = []
+        if paths is not None:
             for path in paths:
                 X_, Y_ = pickle.load(open(path, 'rb'))
                 X = X + [i[:self.input_size] for i in X_]

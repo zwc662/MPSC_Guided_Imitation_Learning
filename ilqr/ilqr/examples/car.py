@@ -183,6 +183,12 @@ class CarCost(Cost):
         q = self.q
         R = self.R
 
+        if x[0] is None:
+            print("x is None!!!!!!!")
+
+        if self.x_barrier_l(x[0]) is None:
+            print("barrier_l {} returns None!!!!!!!!".format(x[0]) )
+
         x_diff = x - self.x_nominal[i]
 
         if self.x_barrier_l is not None:
