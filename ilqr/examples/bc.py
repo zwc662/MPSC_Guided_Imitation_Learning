@@ -113,9 +113,9 @@ class NeuralNetwork:
                     #print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 15))
                     #running_loss = 0.0
 
-            if epoch % 5 == 0:
+            if epoch % 50 == 0:
                 print('[Epoch %d] avg_loss: %.3f' % (epoch + 1, running_loss/len(dataloader)))
-                torch.save({'epoch': epoch, 'model_state_dict': self.model.state_dict(), 'optimizer_state_dict': self.optimizer.state_dict(), 'loss': loss}, str('checkpoints/' + str(self.model_name) + '_' + str(epoch) + '.pt'))
+                torch.save({'epoch': epoch, 'model_state_dict': self.model.state_dict(), 'optimizer_state_dict': self.optimizer.state_dict(), 'loss': loss}, str('checkpoints/' + str(self.model_name) + '.pt'))
     
         print('Finished Training')
 
@@ -125,8 +125,10 @@ class NeuralNetwork:
         return y
 
 
-    def num_parameters(self, model):
-        parameters = self.model.parameters()
+    def num_parameters(self, model = None):
+        if model is None:
+            model = self.model
+        parameters = model.parameters()
         num_pars = 0
         for par in parameters:
             n_ = 1

@@ -217,7 +217,7 @@ class CarCost(Cost):
         self.F = F
         self.f = f
 
-        squared_x_cost = x_diff.T.dot(Q).dot(x_diff) + x.T.dot(F).dot(x)
+        squared_x_cost = x_diff.T.dot(Q).dot(x_diff) + 0.5 * x.T.dot(F).dot(x)
         if terminal:
             return squared_x_cost
 
