@@ -7,6 +7,7 @@ Created on Thu Aug  2 14:40:23 2018
 """
 import numpy as np
 import theano.tensor as T
+from theano.ifelse import ifelse
 from ..dynamics import BatchAutoDiffDynamics, tensor_constrain
 from ..cost import Cost
 
@@ -85,6 +86,75 @@ class CarDynamics(BatchAutoDiffDynamics):
             v_dot = action[..., 0].shape(-1, 1)
             delta = action[..., 1].shape(-1, 1)
         return np.hstack([v_dot, np.tan(delta)])
+
+
+class MountaincarDynamics(BatchAutoDiffDynamics):
+   
+    """Car auto-differentiated dynamics model."""
+
+    def __init__(self, 
+                 dt = 0.01,
+                 constrain = True,
+                 min_bounds = np.array([-0.0015]),
+                 max_bounds = np.array([ 0.0015]),
+                 l = 1.0,
+                 **kwargs):
+        """Car dynamics.
+
+        Args:
+            dt: Time step [s].
+            constrain: Whether to constrain the action space or not.
+            min_bounds: Minimum bounds for actions [N, rad].
+            max_bounds: Maximum bounds for actions [N, rad].
+            wheel diameter
+            **kwargs:
+
+            Note:
+                state: [posx, posy, v, theta]
+                action: [v_dot, theta_dot]
+        """
+
+        self.constrained = constrain
+        self.min_bounds = min_bounds
+        self.max_bounds = max_bounds
+
+        def f(x, u, i):
+            # Constrain action space.
+            if constrain:
+                u = tensor_constrain(u, min_bounds, max_bounds)
+
+            pos = tensor_constrain(x[..., 0], -1.2, 0.6)
+            v = tensor_constrain(x[..., 1], -0.07, 0.07)
+            
+            force = u[..., 0]
+
+            pos_ = T.switch(T.lt(pos, -1.2) , pos, pos + v)
+            v_ = T.switch(T.le(pos, -1.2), 0.001, v + 0.0015 * force - 0.0025 * np.cos(3 * pos)) 
+            
+
+            return T.stack([
+                pos_,
+                v_,
+                ]).T 
+
+
+        super(MountaincarDynamics, self).__init__(f, state_size=2,
+                                             action_size=1,
+                                             **kwargs)
+
+
+    @classmethod
+    def augment_action(cls, action):
+        return np.asarray(action)
+    @classmethod
+    def augment_state(cls, state):
+        return np.asarray(state)
+    @classmethod
+    def reduce_action(cls, action):
+        return np.asarray(action)
+    @classmethod
+    def reduce_state(cls, state):
+        return np.asarray(state)
 
 
 class CarCost(Cost):
@@ -186,18 +256,18 @@ class CarCost(Cost):
         if x[0] is None:
             print("x is None!!!!!!!")
 
-        if self.x_barrier_l(x[0]) is None:
+        if self.x_barrier_l(x) is None:
             print("barrier_l {} returns None!!!!!!!!".format(x[0]) )
 
         x_diff = x - self.x_nominal[i]
 
         if self.x_barrier_l is not None:
-            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[1], 0.0, 0.0])
+            x_barrier_l = x - self.x_barrier_l(x)
         else:
             x_dist = x_diff
 
         if self.x_barrier_u is not None:
-            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[1], 0.0, 0.0])
+            x_barrier_u = x - self.x_barrier_u(x)
         else:
             x_dist = x_diff
 
@@ -241,12 +311,12 @@ class CarCost(Cost):
         x_diff = x - self.x_nominal[i]
 
         if self.x_barrier_l is not None:
-            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[1], 0.0, 0.0])
+            x_barrier_l = x - self.x_barrier_l(x)
         else:
             x_dist = x_diff
 
         if self.x_barrier_u is not None:
-            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[1], 0.0, 0.0])
+            x_barrier_u = x - self.x_barrier_u(x)
         else:
             x_dist = x_diff
 
@@ -303,12 +373,12 @@ class CarCost(Cost):
 
         x_diff = x - self.x_nominal[i]
         if self.x_barrier_l is not None:
-            x_barrier_l = x - np.array([0.0, self.x_barrier_l(x[0])[1], 0.0, 0.0])
+            x_barrier_l = x - self.x_barrier_l(x)
         else:
             x_dist = x_diff
 
         if self.x_barrier_u is not None:
-            x_barrier_u = x - np.array([0.0, self.x_barrier_u(x[0])[1], 0.0, 0.0])
+            x_barrier_u = x - self.x_barrier_u(x)
         else:
             x_dist = x_diff
 
