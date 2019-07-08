@@ -95,8 +95,8 @@ class MountaincarDynamics(BatchAutoDiffDynamics):
     def __init__(self, 
                  dt = 0.01,
                  constrain = True,
-                 min_bounds = np.array([-0.0015]),
-                 max_bounds = np.array([ 0.0015]),
+                 min_bounds = np.array([0.0]),
+                 max_bounds = np.array([2.0]),
                  l = 1.0,
                  **kwargs):
         """Car dynamics.
@@ -121,20 +121,30 @@ class MountaincarDynamics(BatchAutoDiffDynamics):
         def f(x, u, i):
             # Constrain action space.
             if constrain:
-                u = tensor_constrain(u, min_bounds, max_bounds)
+                u = T.clip(u, min_bounds, max_bounds)
 
-            pos = tensor_constrain(x[..., 0], -1.2, 0.6)
-            v = tensor_constrain(x[..., 1], -0.07, 0.07)
+            pos = x[..., 0]
+            v = x[..., 1]
             
-            force = u[..., 0]
+            force = u[..., 0] - 1.0
+            power = 0.0015 
 
-            pos_ = T.switch(T.lt(pos, -1.2) , pos, pos + v)
-            v_ = T.switch(T.le(pos, -1.2), 0.001, v + 0.0015 * force - 0.0025 * np.cos(3 * pos)) 
-            
+
+            #pos_ = T.switch(T.lt(pos, -1.2) , pos, pos + v)
+            #v_ = T.switch(T.le(pos, -1.2), 0.001, v + 0.0015 * force - 0.0025 * np.cos(3 * pos)) 
+
+
+            v_ = v + force * power - 0.0025 * np.cos(3.0 * pos)
+            v_ = T.clip(v_, -0.07, 0.07)
+
+            pos_ = pos + v_
+            pos_ = T.clip(pos_, -1.2, 0.6)
+
+            #v_ = (1.0 - T.eq(pos_, -1.2)) *  v_
 
             return T.stack([
                 pos_,
-                v_,
+                v_
                 ]).T 
 
 

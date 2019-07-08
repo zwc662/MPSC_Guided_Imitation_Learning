@@ -30,7 +30,7 @@ class DiscretePolicy(nn.Module):
 
         action_prob = torch.softmax(self.action_head(x), dim=1)
         return action_prob
-
+ 
     def select_action(self, x):
         action_prob = self.forward(x)
         action = action_prob.multinomial(1)

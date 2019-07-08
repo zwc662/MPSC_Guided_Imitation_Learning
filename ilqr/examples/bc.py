@@ -14,9 +14,11 @@ import logging
 import time
 import os
 
+import sys
+sys.path.append(os.path.abspath('/home/depend/workspace/MPSC_Guided_Imitation_Learning/PyTorch-RL/'))
+from models.mlp_policy import Policy
+
 import pickle
-
-
 
 class mlp(nn.Module):
     def __init__(self, input_size, output_size):
@@ -32,10 +34,32 @@ class mlp(nn.Module):
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         x = self.fc4(x)
-        x_0 = nn.functional.sigmoid(x[:, 0]).unsqueeze(1)
-        x_1 = nn.functional.tanh(x[:, 1]).unsqueeze(1)
-        y = torch.cat((x_0, x_1), dim = 1)
+        if x.size()[-1] == 2:
+            x_0 = nn.functional.sigmoid(x[:, 0]).unsqueeze(1)
+            x_1 = nn.functional.tanh(x[:, 1]).unsqueeze(1)
+            y = torch.cat((x_0, x_1), dim = 1)
+        else:
+            y = nn.functional.sigmoid(x)
         return y
+
+
+class mixed_model(nn.Module):
+    def __init__(self, input_size, output_size):
+        super().__init__()
+        self.pretrained_model = Policy(state_dim = input_size, action_dim = output_size)
+    def forward(self, x):
+        x_mean = -0.47326732673267324 
+        v_mean = 0.006419641964196421 
+        x_std = 0.4221797992305611 
+        v_std =  0.030727780763044565
+        x = (x - torch.Tensor([x_mean, v_mean]))/torch.Tensor([x_std, v_std])
+        action_probs = self.pretrained_model(x)
+        #print(action_probs.size())
+        actions = torch.arange(0, 3).double().unsqueeze(-1)
+        #print(actions.size())
+        expectation = torch.mm(action_probs, actions)
+        #print(expectation)
+        return expectation
 
 
 class NeuralNetwork:
@@ -143,8 +167,16 @@ class NeuralNetwork:
 
 
 if __name__ == '__main__':
-    n = 0
-    agent = NeuralNetwork(input_size = (n + 1) * 4, model_name = 'test', batch_size = 1000)#, checkpoint = 'checkpoints/mlp_H10_995.pt')
+    #n = 0
+    #agent = NeuralNetwork(input_size = (n + 1) * 4, model_name = 'test', batch_size = 1000)#, checkpoint = 'checkpoints/mlp_H10_995.pt')
 
-    agent.data_process(paths = ['expert_traj/expert_pts_10058_H10.p', 'expert_traj/expert_pts_17358_H10.p'])
-    agent.train(num_epoch = 1000)
+    #agent.data_process(paths = ['expert_traj/expert_pts_10058_H10.p', 'expert_traj/expert_pts_17358_H10.p'])
+    #agent.train(num_epoch = 1000)
+
+
+
+    policy_net, _, running_state = pickle.load(open("/home/depend/workspace/MPSC_Guided_Imitation_Learning/PyTorch-RL/assets/learned_models/MountainCar-v0_ppo.p", "rb"))
+    nn = mixed_model(2, 1)
+    nn.pretrained_model = policy_net
+
+    pickle.dump((nn, False, running_state), open("/home/depend/workspace/MPSC_Guided_Imitation_Learning/PyTorch-RL/assets/learned_models/MountainCarContinuous-v0_ppo.p", "wb"))
