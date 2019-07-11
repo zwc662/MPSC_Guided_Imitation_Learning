@@ -134,17 +134,24 @@ class MountaincarDynamics(BatchAutoDiffDynamics):
             #v_ = T.switch(T.le(pos, -1.2), 0.001, v + 0.0015 * force - 0.0025 * np.cos(3 * pos)) 
 
 
-            v_ = v + force * power - 0.0025 * np.cos(3.0 * pos)
-            v_ = T.clip(v_, -0.07, 0.07)
+            v_ = T.clip(v + force * 0.0015 - 0.0025 * np.cos(3.0 * pos), -0.07, 0.07)
+            #v__ = T.clip(v_, -0.07, 0.07)
+            
+            #v_ = T.switch(T.gt(v_, 0.07), 0.07, v_)
+            #v_ = T.switch(T.lt(v_, -0.07), -0.07, v_)
 
-            pos_ = pos + v_
-            pos_ = T.clip(pos_, -1.2, 0.6)
+            pos_ = T.clip(pos + v_, -1.2, 0.6)
+            #pos_ = T.clip(pos_, -1.2, 0.6)
 
-            #v_ = (1.0 - T.eq(pos_, -1.2)) *  v_
+            #pos_ = T.switch(T.gt(pos_, 0.6), 0.6, pos_)
+            #pos_ = T.switch(T.lt(pos_, -1.2), -1.2, pos_)
+            
+            #v_ = T.switch(T.eq(pos_, -1.2) * T.lt(v_, 0.0), 0.0, v_)
+
 
             return T.stack([
-                pos_,
-                v_
+                T.clip(pos + T.clip(v + force * power - 0.0025 * T.cos(3.0 * pos), -0.07, 0.07), -1.2, 0.6),
+                T.clip(v + force * power - 0.0025 * T.cos(3.0 * pos), -0.07, 0.07)
                 ]).T 
 
 
